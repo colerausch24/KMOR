@@ -1,0 +1,201 @@
+---
+title: "Senior Capstone"
+author: "Cole Rausch"
+date: "2023-02-24"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+
+```{r libraries}
+library("dplyr")
+library("ggpubr")
+library("factoextra") #for wss plot
+library("stats")
+library("dplyr")
+library("ggplot2")
+library("ggfortify")
+library("cluster")
+
+SDSU.Breast.Cancer.2022.03.11.subset <- read.csv("~/Library/CloudStorage/OneDrive-Personal/School/Senior/Fall 2022/Math401-Senior Capstone/SDSU Breast Cancer 2022-03-11 subset.csv", header=TRUE)
+SANFORD<-SDSU.Breast.Cancer.2022.03.11.subset
+#View(SANFORD)
+more_data=select(SANFORD,c(3,4,8,22,23)) #select columns that are numeric)
+TheData = select(SANFORD,c(3,8,22,23)) #select columns that are numeric
+SFdata<-na.omit(more_data)
+k<-nrow(SFdata)
+for (i in 1:k){
+  if (SFdata[i,2]=="Dead             "){
+    SFdata[i,2]=1}
+    else{
+      SFdata[i,2]=0
+    }
+}
+SFdata[,2]<-as.integer(SFdata[,2])
+X<-SFdata
+
+```
+
+```{r functions }
+# The code used to generate the WSS plot was adapted from a blog on R-bloggers written by Tal Galili(https://www.r-bloggers.com/2013/08/K-Means-clusteringfrom-r-in-action/)
+wssplot <- function (data,nc=15,seed=1234)
+{
+  wss <-(nrow(data)-1)*sum(apply(data,2,var))
+  for (i in 2:nc){
+    set.seed(seed) 
+    wss[i]<- sum(kmeans(data,centers=i)$withinss)}
+  plot(1:nc,wss,type="b",xlab="Number of Clusters",ylab="Within groups sum of squaress")
+}
+
+#function used to calculate the average distance between data points and cluster center
+average_distance <- function(X, Z){
+  # Calculate the distance between each data point and each cluster center
+  distances <- dist(rbind(Z, X))
+  if (is.null(nrow(distances))) {
+    # If there are only two input vectors, convert distances to a matrix
+    data_distances <- matrix(distances, nrow = 1)
+  } else {
+    # Extract the distances between each data point and its assigned cluster center
+    data_distances <- as.matrix(distances[(length(Z)+1):nrow(distances), 1:length(Z)])
+  }
+  # Calculate the average distance for each cluster center
+  avg_distances <- rowMeans(data_distances)
+  return(avg_distances)
+}
+# function to calculate distance to closest cluster
+calc_min_distance <- function(X, Z) {
+  n<-nrow(X)
+  f <- nrow(Z)
+  distances <- matrix(0, nrow = n, ncol = f)
+  min_distance<-numeric(n)
+  for (i in 1:n) {
+    for (j in 1:f) {
+      distances[i,j] <- sqrt(sum((X[i,] - X[Z[j],])^2))
+    }
+    min_distance[i]=min(distances[i,])
+  }
+  return(min_distance)
+}
+
+KMOR <- function(data, k, n0=0.1*nrow(data), nmax=100, gamma=3){
+  #X-data set
+  #k-number of clusters
+  #gamma-outlier min distance
+  #n0-must be a positive number less than the number of data points n
+  #delta and Nmax are two stopping criteria for the while loop in the KMOR algorithm
+  
+  
+  #The purpose of n0 is to limit the number of outliers that can be identified by the KMOR algorithm.
+  #NOTE:f we do not know the percentage of outliers in a data set, set ting gamma = 3 is a good initial guess. 
+  #To apply the KMOR algorithm, we use the following default values for parameters: gamma = 3, n0 = 0.1n,
+  #delta = 10^-6, and Nmax = 100
+  
+  
+  # Initialize the cluster centers using k-means
+  centers <- kmeans(data, k)$centers
+  # Compute the average distance
+  dists_to_nearest_center <- apply(data, 1, function(x) min(sqrt(rowSums((centers - x)^2))))
+  davg <- mean(dists_to_nearest_center)
+  new_data<-data
+  # Initialize the outliers matrix
+  outliers <- data.frame(matrix(ncol = ncol(data), nrow = nrow(data)))
+  # Main iteration loop
+  iteration=0
+  repeat {
+    iteration<-iteration+1
+    # Update the binary matrix U
+    n <- nrow(new_data)
+    U <- matrix(0, nrow = n, ncol = k + 1)
+    colnames(U) <- c(1:k, "outlier")
+    mean_distance<-average_distance(new_data,centers) #calculate mean distance
+    cdist<-(gamma*mean_distance)
+    min_distance<-calc_min_distance(new_data,centers) #calculate the min distance from datapoint to cluster
+    for (i in 1:n) { 
+      dist1<-min_distance[i]
+      if (dist1>=cdist) {
+        U[i, k+1] <- 1
+        new_data[i,]<-NA
+        outliers[i, ] <- data[i, ]
+      }
+      else{
+        U[i,k+1]<-0
+      }
+      i=i+1
+    }
+    new_data<-na.omit(new_data)  #get rid of  missing values
+    outliers <- na.omit(outliers)  #get rid of  missing values
+    number_of_outliers=sum(U[,k+1])
+    cat("The number of outliers is",number_of_outliers,"\n")
+    # Update the cluster centers
+    centers <- kmeans(new_data, k)$centers
+    # Check if the number of outliers is within the limit
+    if (number_of_outliers <= n0) {
+      cat("The number of outliers is less than n0 \n")
+      break
+    }
+    if (iteration>nmax){
+      cat("The iteration is past the allowed count of nmax \n")
+      break
+    }
+  }
+  result<-kmeans(new_data, k)
+  # Return the binary matrix U and the cluster centers
+  return(list(result=result,new_data=new_data,outliers=outliers))
+}
+```
+
+
+```{r Breast Cancer Data}
+wssplot(X) #find ideal number of clusters
+normal_result<-kmeans(X,2)
+
+
+kmor_result_sanford<-KMOR(X,2)
+kmeans_result_with_added_cluster<-kmeans(X,3)
+#kmor_result
+
+ol<-kmor_result_sanford$outliers
+
+####Compare#####
+
+normal_result$centers
+kmor_result_sanford$result$centers
+kmeans_result_with_added_cluster$centers
+
+normal_result$size
+kmor_result_sanford$result$size
+kmeans_result_with_added_cluster$size
+
+normal_result$totss
+kmor_result_sanford$result$totss
+normal_result$withinss
+kmor_result_sanford$result$withinss
+normal_result$tot.withinss
+kmor_result_sanford$result$tot.withinss
+normal_result$betweenss
+kmor_result_sanford$result$betweenss
+
+kmeans_result_with_added_cluster$totss
+kmeans_result_with_added_cluster$tot.withinss
+kmeans_result_with_added_cluster$betweenss
+
+##################
+
+result2<-kmeans(X,3)
+result2$centers
+result2$size
+result2$tot.withinss
+library(klustR)
+
+pacoplot(data = X, clusters = normal_result$cluster)
+pacoplot(data = kmor_result_sanford$new_data, clusters = kmor_result_sanford$result$cluster)
+pacoplot(data = X, clusters = kmeans(X,3)$cluster)
+
+
+
+```
+
